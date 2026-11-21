@@ -14,3 +14,9 @@ test('snapshot refuses mixed revisions instead of promoting stale data', async (
  const api={request:async path=>path==='/status'?{desired_revision:2}:{revision:path==='/policy'?1:2,items:[],policy:{ordered_gateway_ids:['old']}}};
  await assert.rejects(readRoutingSnapshot(api),error=>error.status===409);
 });
+test('notification acceptance never claims Telegram delivery', async () => {
+ const {notificationJobMessage}=await import('../../src/utilities/routingApi.js');
+ assert.match(notificationJobMessage({kind:'test',phase:'accepted'}),/ожидается/);
+ assert.match(notificationJobMessage({kind:'test',phase:'delivered'}),/подтвердил/);
+ assert.doesNotMatch(notificationJobMessage({kind:'check',phase:'succeeded'}),/отправлено/i);
+});

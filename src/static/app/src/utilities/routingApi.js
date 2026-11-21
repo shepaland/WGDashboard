@@ -29,3 +29,11 @@ export async function readRoutingSnapshot(api) {
 export function canApplyPreview(preview) {
  return Boolean(preview && preview.preview_id && preview.hash && preview.diff && Array.isArray(preview.errors) && preview.errors.length===0 && Date.parse(preview.expires_at)>Date.now());
 }
+export function notificationJobMessage(job) {
+ if(job.phase==='delivered') return 'Zabbix подтвердил отправку тестового сообщения. Прочтение получателем не проверяется.';
+ if(job.phase==='succeeded' && job.kind==='check') return 'Подключение проверено. Доставка сообщения не проверялась.';
+ if(job.phase==='succeeded' && job.kind==='disable') return 'Уведомления о переключении отключены. Уже созданные сообщения могут завершить доставку.';
+ if(['failed','recovery_required'].includes(job.phase)) return 'Операция не подтверждена. Требуется проверка состояния Zabbix.';
+ if(job.phase==='unknown') return 'Статус отправки пока неизвестен. Повторное сообщение автоматически не отправляется.';
+ return 'Подтверждение отправки от Zabbix ожидается.';
+}

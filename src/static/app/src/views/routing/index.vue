@@ -1,12 +1,12 @@
 <script setup>
-import {computed,onMounted,ref} from 'vue';
-import {createRoutingClient,moveGateway,readRoutingSnapshot,canApplyPreview} from '@/utilities/routingApi.js';
+import {computed,onMounted,onUnmounted,ref} from 'vue';
+import {createRoutingClient,moveGateway,readRoutingSnapshot,canApplyPreview,notificationJobMessage} from '@/utilities/routingApi.js';
 const api=createRoutingClient(window.location.pathname.replace(/\/$/,''));
 const tab=ref('gateways'),busy=ref(false),error=ref(''),notice=ref(''),revision=ref(0);
 const state=ref({stale:true,agent_available:false}),gateways=ref([]),entries=ref([]),map=ref([]),events=ref([]),preview=ref(null);
 const policy=ref({ordered_gateway_ids:[],failback:true,interval_seconds:10,failure_threshold:3,recovery_threshold:12});
 const route=ref({kind:'domain',value:'',comment:''}),query=ref(''),profile=ref(''),gatewayName=ref('');
-const binding=ref({enabled:false}),notification=ref({media_type_id:'',recipient_id:'',chat_id:'',topic_id:null}),job=ref(null);
+const binding=ref({enabled:false}),job=ref(null);let jobTimer,disposed=false;
 const ordered=computed(()=>[...policy.value.ordered_gateway_ids.map(id=>gateways.value.find(g=>g.id===id)).filter(Boolean),...gateways.value.filter(g=>!policy.value.ordered_gateway_ids.includes(g.id))]);
 const filtered=computed(()=>entries.value.filter(r=>(r.value+' '+r.comment).toLowerCase().includes(query.value.toLowerCase())));
 async function action(fn){if(busy.value)return;busy.value=true;error.value='';notice.value='';try{await fn()}catch(e){error.value=e.status===412?'Черновик изменён в другой сессии. Обновите данные перед повтором.':e.status===503?'Контроллер недоступен. Состояние VPN не изменено.':e.message}finally{busy.value=false}}
@@ -20,7 +20,15 @@ async function importProfile(){await action(async()=>{await api.request('/gatewa
 async function selectTab(value){tab.value=value;if(value==='map'&&state.value.agent_available)await action(async()=>{map.value=(await api.request('/routes')).items||[]});if(value==='events')await action(async()=>{events.value=(await api.request('/events')).items||[]});if(value==='notifications')await action(async()=>{binding.value=await api.request('/notifications/telegram')})}
 async function makePreview(){await action(async()=>{preview.value=await api.request('/previews',{method:'POST',body:{revision:revision.value},revision:revision.value})})}
 async function applyPreview(){await action(async()=>{const result=await api.request('/operations',{method:'POST',body:{preview_id:preview.value.preview_id,hash:preview.value.hash},revision:revision.value});notice.value='Операция '+result.operation_id+' принята. Следите за результатом в журнале.';preview.value=null})}
-async function notifyAction(kind){await action(async()=>{job.value=await api.request('/notifications/telegram/'+kind,{method:'POST',body:notification.value});notice.value=kind==='test'?'Тест поставлен в очередь Zabbix. Доставка ещё не подтверждена.':'Проверка Zabbix запущена.'})}
+async function pollNotification(id,attempt=0){
+ if(disposed)return;
+ try{job.value=await api.request('/notifications/jobs/'+id);notice.value=notificationJobMessage(job.value);
+  if(!['delivered','succeeded','failed','recovery_required'].includes(job.value.phase)&&attempt<30)jobTimer=setTimeout(()=>pollNotification(id,attempt+1),2000);
+  if(job.value.kind==='disable'&&job.value.phase==='succeeded')binding.value=await api.request('/notifications/telegram');
+ }catch(e){error.value='Не удалось обновить статус задания. Подтверждения отправки пока нет.'}
+}
+async function notifyAction(kind){await action(async()=>{clearTimeout(jobTimer);const result=await api.request('/notifications/telegram/'+kind,{method:'POST',body:{}});job.value={job_id:result.job_id,phase:'queued',kind};notice.value=notificationJobMessage(job.value);jobTimer=setTimeout(()=>pollNotification(result.job_id),500)})}
+onUnmounted(()=>{disposed=true;clearTimeout(jobTimer)});
 onMounted(()=>action(refresh));
 </script>
 <template>
@@ -43,9 +51,14 @@ onMounted(()=>action(refresh));
   <details><summary>Наблюдаемая карта и источники</summary><p v-if="!state.agent_available">Нет свежих данных от агента.</p><ul v-else><li v-for="r in map" :key="r.network">{{r.network}} · {{r.sources}}</li></ul></details>
  </div>
  <div v-if="tab==='events'"><h2 class="h5">Журнал операций</h2><p v-if="!events.length" class="text-muted">Нет загруженных событий.</p><ol><li v-for="event in events" :key="event.id">{{event.happened_at}} · {{event.type}} · {{event.phase}}</li></ol></div>
- <div v-if="tab==='notifications'"><h2 class="h5">Telegram через Zabbix</h2><p>При изменении ведущего узла сообщение отправляет существующий Zabbix.</p><p>Состояние: {{binding.status||'не проверено'}}</p><form @submit.prevent="notifyAction('check')"><label class="form-label d-block">Media type Zabbix<input class="form-control" v-model="notification.media_type_id"></label><label class="form-label d-block">Получатель Zabbix<input class="form-control" v-model="notification.recipient_id"></label><label class="form-label d-block">Chat ID<input class="form-control" v-model="notification.chat_id"></label><label class="form-label d-block">Topic ID, если используется<input class="form-control" type="number" v-model="notification.topic_id"></label><div class="d-flex gap-2"><button class="btn btn-outline-primary">Проверить подключение</button><button type="button" class="btn btn-outline-secondary" @click="notifyAction('test')">Отправить тест через Zabbix</button></div></form><p v-if="job" class="mt-3">Задание: {{job.job_id}}. Статус доставки нужно подтвердить по ответу Zabbix.</p></div>
+ <div v-if="tab==='notifications'"><h2 class="h5">Telegram через Zabbix</h2><p>При изменении ведущего узла сообщение отправляет существующий Zabbix.</p><p>Состояние: {{binding.status==='configured'?'Настроен':(binding.status||'Не проверено')}}</p>
+  <dl v-if="binding.action_id" class="row"><dt class="col-sm-4">Канал</dt><dd class="col-sm-8">{{binding.media_name}}</dd><dt class="col-sm-4">Получатель</dt><dd class="col-sm-8">{{binding.recipient_name}}</dd><dt class="col-sm-4">Чат</dt><dd class="col-sm-8">{{Array.isArray(binding.chat_id)?binding.chat_id.join(', '):binding.chat_id}}</dd><dt class="col-sm-4">Уведомления</dt><dd class="col-sm-8">{{binding.enabled?'Включены':'Отключены'}}</dd></dl>
+  <p v-if="binding.capabilities&&!binding.capabilities.new_channel" class="text-muted">Используется существующий канал. Настройка нового бота или получателя ещё не включена в этой версии.</p>
+  <div class="d-flex gap-2 flex-wrap"><button class="btn btn-outline-primary" @click="notifyAction('check')">Проверить подключение</button><button class="btn btn-outline-secondary" :disabled="!binding.enabled||!binding.channel_enabled" @click="notifyAction('test')">Отправить тест через Zabbix</button><button class="btn btn-outline-danger" :disabled="!binding.enabled" @click="notifyAction('disable')">Отключить уведомления о переключении</button></div>
+  <p v-if="job" class="mt-3" role="status">{{notificationJobMessage(job)}}</p>
+ </div>
  </fieldset>
- <footer class="card p-3 mt-4"><div class="d-flex justify-content-between flex-wrap gap-3 align-items-center"><div><strong>Изменения сохраняются в черновике</strong><p class="small text-muted mb-0">Перед применением — просмотр diff и независимый автооткат.</p></div><button class="btn btn-primary" :disabled="busy||!state.agent_available" @click="makePreview">Проверить изменения</button></div><div v-if="preview" class="mt-3"><pre class="preview">{{JSON.stringify(preview.diff||preview,null,2)}}</pre><button class="btn btn-warning" :disabled="busy||!canApplyPreview(preview)" @click="applyPreview">Применить с автооткатом</button></div></footer>
+ <footer class="card p-3 mt-4"><div class="d-flex justify-content-between flex-wrap gap-3 align-items-center"><div><strong>Изменения сохраняются в черновике</strong><p class="small text-muted mb-0">Перед применением — просмотр diff и независимый автооткат.</p></div><button class="btn btn-primary" :disabled="busy||!state.agent_available||!state.capabilities?.configuration_apply" @click="makePreview">Проверить изменения</button></div><div v-if="preview" class="mt-3"><pre class="preview">{{JSON.stringify(preview.diff||preview,null,2)}}</pre><button class="btn btn-warning" :disabled="busy||!canApplyPreview(preview)" @click="applyPreview">Применить с автооткатом</button></div></footer>
 </section>
 </template>
 <style scoped>

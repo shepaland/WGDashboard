@@ -10,8 +10,9 @@ priority and route edits use optimistic concurrency. Bridge requests use a prote
 Unix socket at `/run/routing-control/api.sock`; never expose the companion API over
 TCP. Dashboard API keys do not authorize this bridge. Mutations require CSRF.
 
-Telegram delivery remains owned by Zabbix. The notification form currently expresses
-the integration contract; it does not configure or send notifications by itself.
+Telegram delivery remains owned by Zabbix. The existing-channel form is connected to durable check/test/disable jobs in the
+companion API. New bot/recipient provisioning and saving a candidate binding remain
+unavailable. The API requires explicitly configured server-side Zabbix credentials.
 
 ## Development checks
 
