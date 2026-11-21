@@ -211,6 +211,8 @@ with app.app_context():
     app.register_blueprint(createClientBlueprint(WireguardConfigurations, DashboardConfig, DashboardClients))
 
 _, APP_PREFIX = DashboardConfig.GetConfig("Server", "app_prefix")
+from modules.routing_bridge import create_routing_blueprint
+app.register_blueprint(create_routing_blueprint(APP_PREFIX or ""))
 cors = CORS(app, resources={rf"{APP_PREFIX}/api/*": {
     "origins": "*",
     "methods": "DELETE, POST, GET, OPTIONS",

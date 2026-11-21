@@ -123,7 +123,8 @@ export default {
 					<LocaleText t="Tools"></LocaleText>
 				</h6>
 				<ul class="nav flex-column px-2 gap-1">
-					<li class="nav-item">
+					<li class="nav-item"><RouterLink to="/routing" class="nav-link rounded-3" active-class="active">Маршрутизация VPN</RouterLink></li>
+<li class="nav-item">
 						<RouterLink to="/system_status" class="nav-link rounded-3" active-class="active">
 							<LocaleText t="System Status"></LocaleText>
 						</RouterLink>

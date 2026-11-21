@@ -29,6 +29,7 @@ const router = createRouter({
 				requiresAuth: true,
 			},
 			children: [
+                {name: "Routing Control", path: "routing", component: () => import("@/views/routing/index.vue"), meta: {title: "Маршрутизация VPN"}},
 				{
 					name: "Configuration List",
 					path: '',
